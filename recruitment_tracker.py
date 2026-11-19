@@ -1,6 +1,10 @@
+"""Track job applicants and export an SQLite-backed recruitment report."""
+
 import ast
+import csv
 import operator
 import sqlite3
+from contextlib import closing
 from math import isfinite
 
 
@@ -41,56 +45,83 @@ def _salary_limit(salary_rule):
     return limit
 
 
-conn = sqlite3.connect(":memory:")
-conn.execute("CREATE TABLE applicants (id INTEGER PRIMARY KEY, name TEXT, role TEXT, expected_salary INTEGER, status TEXT)")
-
-
-def addApplicant(name, role, expected_salary, status="applied"):
-    conn.execute(
-        "INSERT INTO applicants (name, role, expected_salary, status) "
-        "VALUES (?, ?, ?, ?)", (name, role, expected_salary, status)
+def _create_database():
+    database = sqlite3.connect(":memory:")
+    database.execute(
+        "CREATE TABLE applicants ("
+        "id INTEGER PRIMARY KEY, name TEXT, role TEXT, "
+        "expected_salary INTEGER, status TEXT)"
     )
-    conn.commit()
+    return database
+
+
+def add_applicant(name, role, expected_salary, status="applied"):
+    """Record an applicant and their initial hiring status."""
+    with conn:
+        conn.execute(
+            "INSERT INTO applicants (name, role, expected_salary, status) "
+            "VALUES (?, ?, ?, ?)",
+            (name, role, expected_salary, status),
+        )
 
 
 def shortlist(role, salary_rule):
-    rows = conn.execute("SELECT name, expected_salary FROM applicants WHERE role = ?", (role,)).fetchall()
+    """Return applicants for the role within the inclusive salary budget."""
     limit = _salary_limit(salary_rule)
-    total_seen = len(rows)   
-    result = []
-    for name, salary in rows:
-        if salary <= limit:
-            result.append(name)
-    if result:
-        return result
+    rows = conn.execute(
+        "SELECT name, expected_salary FROM applicants "
+        "WHERE role = ? ORDER BY id",
+        (role,),
+    )
+    return [name for name, salary in rows if salary <= limit]
 
 
-def updateStatus(applicant_id, status):
+def update_status(applicant_id, status):
+    """Update the applicant's hiring status."""
     with conn:
         conn.execute(
-            "UPDATE applicants SET status = ? WHERE id = ?",
-            (status, applicant_id),
+            "UPDATE applicants SET status = ? WHERE id = ?", (status, applicant_id),
         )
 
-def exportReport(path):
-    f = open(path, "w")
-    for row in conn.execute("SELECT name, role, status FROM applicants"):
-        f.write(",".join(row) + "\n")
-    f.close()
+
+def export_report(path):
+    """Export applicant names, roles, and statuses as UTF-8 CSV."""
+    rows = conn.execute(
+        "SELECT name, role, status FROM applicants ORDER BY id"
+    )
+    with open(path, "w", encoding="utf-8", newline="") as report:
+        csv.writer(report).writerows(rows)
 
 
-def countByStatus(status):
-    return conn.execute("SELECT COUNT(*) FROM applicants WHERE status = ?", (status,)).fetchone()[0]
+def count_by_status(status):
+    """Count applicants with the given hiring status."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM applicants WHERE status = ?", (status,)
+    ).fetchone()[0]
+
+
+# Preserve the starter module's function names for existing callers.
+# pylint: disable=invalid-name
+addApplicant = add_applicant
+updateStatus = update_status
+exportReport = export_report
+countByStatus = count_by_status
+# pylint: enable=invalid-name
+
+conn = _create_database()
 
 
 def main():
-    addApplicant("Nina", "analyst", 600000)
-    addApplicant("Omar", "analyst", 750000, "interview")
-    addApplicant("Priya", "developer", 900000)
-    updateStatus(1, "interview")
+    """Run the demonstration and write the sample report."""
+    add_applicant("Nina", "analyst", 600000)
+    add_applicant("Omar", "analyst", 750000, "interview")
+    add_applicant("Priya", "developer", 900000)
+    update_status(1, "interview")
     print(shortlist("analyst", "500000 + 150000"))
-    exportReport("applicants_report.csv")
-    print(countByStatus("interview"), "in interview")
+    export_report("applicants_report.csv")
+    print(count_by_status("interview"), "in interview")
 
 
-main()
+if __name__ == "__main__":
+    with closing(conn):
+        main()
