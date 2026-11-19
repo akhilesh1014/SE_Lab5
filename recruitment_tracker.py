@@ -80,7 +80,8 @@ def update_status(applicant_id, status):
     """Update the applicant's hiring status."""
     with conn:
         conn.execute(
-            "UPDATE applicants SET status = ? WHERE id = ?", (status, applicant_id),
+            "UPDATE applicants SET status = ? WHERE id = ?",
+            (status, applicant_id),
         )
 
 
